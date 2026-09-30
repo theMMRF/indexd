@@ -1,4 +1,5 @@
 from sqlalchemy import func, and_
+from indexd.visibility import visibility_filter
 
 from indexd.errors import UserError
 from indexd.index.drivers.alchemy import (
@@ -7,7 +8,6 @@ from indexd.index.drivers.alchemy import (
     IndexRecordUrlMetadata,
 )
 from indexd.index.drivers.query import URLsQueryDriver
-
 
 driver_query_map = {
     "sqlite": dict(array_agg=func.group_concat, string_agg=func.group_concat),
@@ -52,12 +52,12 @@ class AlchemyURLsQueryDriver(URLsQueryDriver):
                 IndexRecordUrl.did, q_func["string_agg"](IndexRecordUrl.url, ",")
             )
 
+            query = query.join(IndexRecord).filter(visibility_filter(IndexRecord))
+
             # add version filter if versioned is not None
             if versioned is True:  # retrieve only those with a version number
-                query = query.outerjoin(IndexRecord)
                 query = query.filter(IndexRecord.version.isnot(None))
             elif versioned is False:  # retrieve only those without a version number
-                query = query.outerjoin(IndexRecord)
                 query = query.filter(~IndexRecord.version.isnot(None))
 
             query = query.group_by(IndexRecordUrl.did)
@@ -116,6 +116,8 @@ class AlchemyURLsQueryDriver(URLsQueryDriver):
                 IndexRecordUrlMetadata.key == key,
                 IndexRecordUrlMetadata.value == value,
             )
+
+            query = query.filter(visibility_filter(IndexRecord))
 
             # filter by version
             if versioned is True:

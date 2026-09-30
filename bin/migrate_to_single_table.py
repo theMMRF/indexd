@@ -1,6 +1,7 @@
 """
 to run: python migrate_to_single_table.py --creds-path /dir/containing/db_creds --start-did <guid>
 """
+
 import argparse
 import backoff
 import json
@@ -214,6 +215,7 @@ class IndexRecordMigrator:
             records_to_insert.append(
                 Record(
                     guid=record.did,
+                    visibility=record.visibility,
                     baseid=record.baseid,
                     rev=record.rev,
                     form=record.form,

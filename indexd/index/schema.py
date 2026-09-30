@@ -41,6 +41,7 @@ POST_RECORD_SCHEMA = {
         },
         "urls": {"type": "array", "items": {"type": "string"}},
         "acl": {"type": "array", "items": {"type": "string"}},
+        "visibility": {"enum": ["public", "restricted"]},
         "authz": {
             "description": "optional authorization rules of the object",
             "type": "array",
@@ -90,6 +91,7 @@ PUT_RECORD_SCHEMA = {
     "properties": {
         "urls": {"type": "array", "items": {"type": "string"}},
         "acl": {"type": "array", "items": {"type": "string"}},
+        "visibility": {"enum": ["public", "restricted"]},
         "authz": {"type": "array", "items": {"type": "string"}},
         "file_name": {"type": ["string", "null"]},
         "version": {"type": ["string", "null"]},
@@ -210,6 +212,7 @@ UPDATE_ALL_VERSIONS_SCHEMA = {
     "description": "The metadata to update for all versions of the record. Only some fields can be updated in this way.",
     "properties": {
         "acl": {"type": "array", "items": {"type": "string"}},
+        "visibility": {"enum": ["public", "restricted"]},
         "authz": {"type": "array", "items": {"type": "string"}},
     },
 }

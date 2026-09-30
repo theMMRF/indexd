@@ -158,7 +158,7 @@ To reiterate, a given GUID will always point to the same data, even if there are
 
 ### Access Control
 
-Indexd records (identified by GUIDs) are intended to be publicly readable documents, and therefore contain no information other than resource locators. However, in order to prevent unauthorized
+Indexd records (identified by GUIDs) are publicly readable by default, with opt-in restricted discovery documented in [selective visibility](docs/selective-visibility.md), and therefore contain no information other than resource locators. However, in order to prevent unauthorized
 creation/updating/deleting of records, each record keeps a list of authorization rules (in an `authz` property).
 
 The `authz` property contains a list of abstract "resources" a user must have access to in order to have permission to update/delete the associated GUID. For backward compatibility, the ACL list that was used for access control is still available (the `acl` field).
@@ -336,3 +336,5 @@ Please refer to the Helm quickstart guide HERE (https://github.com/uc-cdis/index
 <img src="./docs/gen3_large.png" alt="Gen3 Logo" height="425
 " hspace="10"/>
 </div>
+
+Opt-in private discovery is documented in [selective file visibility](docs/selective-visibility.md).

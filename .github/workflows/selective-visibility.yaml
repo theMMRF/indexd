@@ -1,0 +1,29 @@
+name: Selective visibility
+on:
+  pull_request:
+  push:
+    branches: [feature/selective-file-visibility, feature/selective-file-visibility-13.1]
+permissions:
+  contents: read
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: indexd_tests
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      VISIBILITY_TEST_ES_URL: http://localhost:9200
+      PROMETHEUS_MULTIPROC_DIR: /tmp/visibility-metrics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install poetry==2.2.1
+      - run: poetry install --no-interaction
+      - run: poetry run pytest tests/visibility && poetry run pytest tests --ignore=tests/visibility

@@ -30,6 +30,8 @@ def get_dos_record(record):
             ret = blueprint.index_driver.get_by_alias(record)
             ret["alias"] = blueprint.index_driver.get_aliases_for_did(ret["did"])
         except IndexNoRecordFound:
+            if blueprint.index_driver.has_local_identifier(record):
+                raise IndexNoRecordFound("no record found")
             try:
                 ret = blueprint.alias_driver.get(record)
             except AliasNoRecordFound:

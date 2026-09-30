@@ -22,7 +22,6 @@ from indexd.alias.drivers.alchemy import SQLAlchemyAliasDriver
 from indexd.auth.drivers.alchemy import SQLAlchemyAuthDriver
 from indexd.index.drivers.single_table_alchemy import SingleTableSQLAlchemyIndexDriver
 
-
 POSTGRES_CONNECTION = "postgresql://postgres:postgres@localhost:5432/indexd_tests"  # pragma: allowlist secret
 
 logger = get_logger(__name__, log_level="info")
@@ -53,6 +52,7 @@ def clear_database():
             "base_version",
             "record",
             "stats",
+            "record_visibility_state",
         ]
 
         for table_name in table_delete_order:

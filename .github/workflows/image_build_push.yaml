@@ -4,6 +4,7 @@ on: push
 
 jobs:
   ci:
+    if: github.repository_owner == 'uc-cdis'
     name: Build Image and Push to Quay
     uses: uc-cdis/.github/.github/workflows/image_build_push.yaml@master
     secrets:

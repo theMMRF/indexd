@@ -7,6 +7,7 @@ name: Wool
 
 jobs:
   runWool:
+    if: github.repository_owner == 'uc-cdis'
     name: Run black
     runs-on: ubuntu-latest
     steps:

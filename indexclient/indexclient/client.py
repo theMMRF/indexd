@@ -15,6 +15,7 @@ UPDATABLE_ATTRS = [
     "metadata",
     "acl",
     "authz",
+    "visibility",
     "urls_metadata",
     "description",
     "content_created_date",
@@ -248,6 +249,7 @@ class IndexClient(object):
         description=None,
         content_created_date=None,
         content_updated_date=None,
+        visibility=None,
     ):
         """Create a new entry in indexd
 
@@ -285,6 +287,7 @@ class IndexClient(object):
             "description": description,
             "content_created_date": content_created_date,
             "content_updated_date": content_updated_date,
+            "visibility": visibility,
         }
         if did:
             json["did"] = did
@@ -407,12 +410,14 @@ class IndexClient(object):
 
     @retry_and_timeout_wrapper
     def _get(self, *path, **kwargs):
+        kwargs.setdefault("auth", self.auth)
         resp = requests.get(self.url_for(*path), **kwargs)
         handle_error(resp)
         return resp
 
     @timeout_wrapper
     def _post(self, *path, **kwargs):
+        kwargs.setdefault("auth", self.auth)
         resp = requests.post(self.url_for(*path), **kwargs)
         handle_error(resp)
         return resp
@@ -511,7 +516,7 @@ class Document(object):
         return document with subset of attributes that are allowed
         to be updated
         """
-        return {k: v for k, v in self._doc.items() if k in UPDATABLE_ATTRS}
+        return {k: self.__dict__[k] for k in UPDATABLE_ATTRS if k in self.__dict__}
 
     @property
     def _doc(self):

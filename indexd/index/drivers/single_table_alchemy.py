@@ -1,3 +1,4 @@
+from sqlalchemy import event
 import datetime
 import uuid
 
@@ -26,6 +27,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from contextlib import contextmanager
 
+from indexd.visibility import (
+    validate_visibility,
+    visibility_filter,
+    visible_stats,
+    require_visible_bundle,
+    visibility_access,
+    mark_record_restricted,
+    authorize_private_write,
+)
 from indexd import auth
 from indexd.errors import UserError, AuthError
 from indexd.index.driver import IndexDriverABC
@@ -65,6 +75,9 @@ class Record(Base):
     version = Column(String)
     uploader = Column(String)
     description = Column(String)
+    visibility = Column(
+        String, nullable=False, default="public", server_default="public", index=True
+    )
     content_created_date = Column(DateTime)
     content_updated_date = Column(DateTime)
     hashes = Column(JSONB, index=True)
@@ -95,6 +108,7 @@ class Record(Base):
 
         return {
             "did": self.guid,
+            "visibility": self.visibility,
             "baseid": self.baseid,
             "rev": self.rev,
             "size": self.size,
@@ -163,7 +177,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         Returns list of records stored by the backend.
         """
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
 
             if start is not None:
                 query = query.filter(Record.guid > start)
@@ -379,7 +393,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             raise UserError("Please provide size/hashes/ids to filter")
 
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
 
             if size:
                 query = query.filter(Record.size == size)
@@ -438,6 +452,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
+        visibility="public",
     ):
         """
         Creates a new record given size, urls, acl, authz, hashes, metadata,
@@ -445,6 +460,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         if guid is provided, update the new record with the guid otherwise create it
         """
 
+        validate_visibility(visibility, authz)
         urls = urls or []
         acl = acl or []
         authz = authz or []
@@ -454,6 +470,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = Record()
+            record.visibility = visibility
 
             if not baseid:
                 baseid = str(uuid.uuid4())
@@ -511,11 +528,14 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
             return record.guid, record.rev, record.baseid
 
-    def add_blank_record(self, uploader, file_name=None, authz=None):
+    def add_blank_record(
+        self, uploader, file_name=None, authz=None, visibility="public"
+    ):
         """
         Create a new blank record with only uploader and optionally
         file_name and authz fields filled
         """
+        validate_visibility(visibility, authz)
         # if an authz is provided, ensure that user can actually create for that resource
         authorized = False
         authz_err_msg = "Auth error when attempting to update a blank record. User must have '{}' access on '{}' for service 'indexd'."
@@ -540,6 +560,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = Record()
+            record.visibility = visibility
 
             did = str(uuid.uuid4())
             baseid = str(uuid.uuid4())
@@ -579,6 +600,12 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 raise NoRecordFound("no record found")
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
+
+            authorize_private_write(record, "update")
+
+            validate_visibility(
+                record.visibility, authz if authz is not None else (record.authz or [])
+            )
 
             if record.size or record.hashes:
                 raise UserError("update api is not supported for non-empty record!")
@@ -636,7 +663,12 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         """
         with self.session as session:
             try:
-                record = session.query(Record).filter(Record.alias.any(alias)).one()
+                record = (
+                    session.query(Record)
+                    .filter(visibility_filter(Record))
+                    .filter(Record.alias.any(alias))
+                    .one()
+                )
             except NoResultFound:
                 raise NoRecordFound("no record found")
             except MultipleResultsFound:
@@ -647,6 +679,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         """
         Gets the aliases for a did
         """
+        self.get(did)
         with self.session as session:
             self.logger.info(f"Trying to get all aliases for did {did}...")
 
@@ -671,6 +704,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             if index_record is None:
                 self.logger.warning(f"No record found for did {did}")
                 raise NoRecordFound(did)
+
+            authorize_private_write(index_record, "update")
 
             # authorization
             try:
@@ -716,6 +751,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 self.logger.warning(f"No record found for did {did}")
                 raise NoRecordFound(did)
 
+            authorize_private_write(index_record, "update")
+
             # authorization
             try:
                 resources = index_record.authz
@@ -756,6 +793,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 self.logger.warning(f"No record found for did {did}")
                 raise NoRecordFound(did)
 
+            authorize_private_write(index_record, "delete")
+
             # authorization
             try:
                 resources = index_record.authz
@@ -786,6 +825,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 self.logger.warning(f"No record found for did {did}")
                 raise NoRecordFound(did)
 
+            authorize_private_write(index_record, "delete")
+
             # authorization
             try:
                 resources = index_record.authz
@@ -814,7 +855,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         If the given id is a baseid, it will return the latest version
         """
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             query = query.filter(
                 or_(Record.guid == guid, Record.baseid == guid)
             ).order_by(Record.created_date.desc())
@@ -834,7 +875,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         Gets records for the the record ids.
         """
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             subquery = query.filter(Record.guid.in_(guid_list))
             compiled_list = [q.to_document_dict() for q in subquery]
             return compiled_list
@@ -887,8 +928,15 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
 
+            authorize_private_write(record, "update")
+
             if rev != record.rev:
                 raise RevisionMismatch("Revision mismatch")
+
+            validate_visibility(
+                changing_fields.get("visibility", record.visibility),
+                changing_fields.get("authz", (record.authz or [])),
+            )
 
             # Some operations are dependant on other operations. For example
             # urls has to be updated before url_metadata because of schema
@@ -968,6 +1016,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
 
+            authorize_private_write(record, "delete")
+
             if rev != record.rev:
                 raise RevisionMismatch("revision mismatch")
 
@@ -995,12 +1045,14 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
+        visibility=None,
     ):
         """
         Add a record version given guid
         """
         urls = urls or []
         acl = acl or []
+        supplied_authz = authz
         authz = authz or []
         hashes = hashes or {}
         metadata = metadata or {}
@@ -1016,10 +1068,17 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
 
+            authorize_private_write(record, "update")
+
+            visibility = record.visibility if visibility is None else visibility
+            if supplied_authz is None and visibility == "restricted":
+                authz = record.authz or []
+            validate_visibility(visibility, authz)
             auth.authorize("update", record.authz + authz)
 
             baseid = record.baseid
             record = Record()
+            record.visibility = visibility
             guid = new_did
             if not guid:
                 guid = str(uuid.uuid4())
@@ -1084,6 +1143,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
 
+            authorize_private_write(old_record, "update")
             old_authz = old_record.authz
             try:
                 auth.authorize("update", old_authz)
@@ -1097,6 +1157,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 raise MultipleRecordsFound("{guid} already exists".format(guid=new_did))
 
             new_record = Record()
+            new_record.visibility = old_record.visibility
             guid = new_did
             if not guid:
                 guid = str(uuid.uuid4())
@@ -1115,6 +1176,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 old_acl = old_record.acl
                 new_record.acl = old_acl
             new_record.authz = authz
+            validate_visibility(new_record.visibility, authz)
 
             try:
                 session.add(new_record)
@@ -1131,14 +1193,19 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         """
         ret = dict()
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             query = query.filter(Record.guid == guid)
 
             try:
                 record = query.one()
                 baseid = record.baseid
             except NoResultFound:
-                record = session.query(Record).filter_by(baseid=guid).first()
+                record = (
+                    session.query(Record)
+                    .filter(visibility_filter(Record))
+                    .filter_by(baseid=guid)
+                    .first()
+                )
                 if not record:
                     raise NoRecordFound("no record found")
                 else:
@@ -1147,7 +1214,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 raise MultipleRecordsFound("multiple records found")
 
             # Find all versions of this record
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             records = (
                 query.filter(Record.baseid == baseid)
                 .order_by(Record.created_date.asc())
@@ -1159,7 +1226,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         return ret
 
-    def update_all_versions(self, guid, acl=None, authz=None):
+    def update_all_versions(self, guid, acl=None, authz=None, visibility=None):
         """
         Update all record versions with new acl and authz
         """
@@ -1188,16 +1255,34 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             )
 
             # User requires update permissions for all versions of the record
+            for candidate in records:
+                authorize_private_write(candidate, "update")
             all_resources = []
             for rec in records:
                 all_resources += rec.authz
             auth.authorize("update", list(all_resources))
 
             ret = []
+            if authz is not None and (
+                visibility == "restricted"
+                or any(candidate.visibility == "restricted" for candidate in records)
+            ):
+                auth.authorize("update", authz)
+            for candidate in records:
+                candidate_authz = candidate.authz or []
+                validate_visibility(
+                    visibility if visibility is not None else candidate.visibility,
+                    authz if authz is not None else candidate_authz,
+                )
+
             # Update fields for all versions
             for record in records:
-                record.acl = set(acl) if acl else None
-                record.authz = set(authz) if authz else None
+                if visibility is not None:
+                    record.visibility = visibility
+                if acl is not None:
+                    record.acl = list(set(acl))
+                if authz is not None:
+                    record.authz = list(set(authz))
 
                 record.rev = str(uuid.uuid4())[:8]
                 ret.append(
@@ -1211,18 +1296,20 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         Get the lattest record version given did
         """
         with self.session as session:
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             query = query.filter(Record.guid == guid)
 
             try:
                 record = query.one()
                 baseid = record.baseid
             except NoResultFound:
+                if self.has_local_identifier(guid, include_base=False):
+                    raise NoRecordFound("no record found")
                 baseid = guid
             except MultipleResultsFound:
                 raise MultipleRecordsFound("multiple records found")
 
-            query = session.query(Record)
+            query = session.query(Record).filter(visibility_filter(Record))
             query = query.filter(Record.baseid == baseid).order_by(
                 Record.created_date.desc()
             )
@@ -1234,6 +1321,24 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 raise NoRecordFound("no record found")
 
             return record.to_document_dict()
+
+    def has_local_identifier(self, identifier, include_base=True):
+        """Prevent denied local identifiers from falling through to federation."""
+        identifiers = [identifier]
+        prefix = self.config.get("DEFAULT_PREFIX")
+        if prefix:
+            identifiers.append(
+                identifier[len(prefix) :]
+                if identifier.startswith(prefix)
+                else prefix + identifier
+            )
+        with self.session as session:
+            predicate = or_(
+                Record.guid.in_(identifiers),
+                and_(include_base, Record.baseid.in_(identifiers)),
+                Record.alias.overlap(identifiers),
+            )
+            return session.query(Record).filter(predicate).first() is not None
 
     def health_check(self):
         """
@@ -1284,8 +1389,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             return session.execute(select([func.count()]).select_from(Record)).scalar()
 
     def get_stats(self, month=None, year=None):
-        with self.session as session:
-            return get_stats(session, month, year)
+        return visible_stats(self, Record, month, year)
 
     def add_bundle(
         self,
@@ -1339,20 +1443,26 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             return record.bundle_id, record.name, record.bundle_data
 
     def get_bundle_list(self, start=None, limit=100, page=None):
-        """
-        Returns list of all bundles
-        """
+        """Paginate only bundles whose live descendants are visible."""
         with self.session as session:
-            query = session.query(DrsBundleRecord)
-            query = query.limit(limit)
-
+            query = session.query(DrsBundleRecord).order_by(DrsBundleRecord.bundle_id)
             if start is not None:
                 query = query.filter(DrsBundleRecord.bundle_id > start)
-
-            if page is not None:
-                query = query.offset(limit * page)
-
-            return [i.to_document_dict() for i in query]
+            offset = limit * (page or 0)
+            result = []
+            visible_count = 0
+            for record in query.yield_per(100):
+                try:
+                    if not visibility_access()[0]:
+                        require_visible_bundle(self, record.to_document_dict(True))
+                except NoRecordFound:
+                    continue
+                if visible_count >= offset and len(result) < limit:
+                    result.append(record.to_document_dict())
+                visible_count += 1
+                if len(result) >= limit:
+                    break
+            return result
 
     def get_bundle(self, bundle_id, expand=False):
         """
@@ -1369,6 +1479,8 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             if record is None:
                 raise NoRecordFound("No bundle found")
 
+            if not visibility_access()[0]:
+                require_visible_bundle(self, record.to_document_dict(True))
             doc = record.to_document_dict(expand)
 
             return doc
@@ -1464,7 +1576,9 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         )
 
         with self.session as session:
-            query = session.query(Record.guid, Record.urls)
+            query = session.query(Record.guid, Record.urls).filter(
+                visibility_filter(Record)
+            )
 
             # add version filter if versioned is not None
             if versioned is True:  # retrieve only those with a version number
@@ -1515,7 +1629,9 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             versioned.lower() in ["true", "t", "yes", "y"] if versioned else None
         )
         with self.session as session:
-            query = session.query(Record.guid, Record.urls, Record.rev)
+            query = session.query(Record.guid, Record.urls, Record.rev).filter(
+                visibility_filter(Record)
+            )
 
             query = query.filter(
                 func.jsonb_path_exists(
@@ -1596,3 +1712,7 @@ def get_record_if_exists(did, session):
     If no record found, returns None.
     """
     return session.query(Record).filter(Record.guid == did).first()
+
+
+event.listen(Record, "after_insert", mark_record_restricted)
+event.listen(Record, "after_update", mark_record_restricted)

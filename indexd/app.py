@@ -19,7 +19,10 @@ from .guid.blueprint import blueprint as indexd_drs_blueprint
 from .blueprint import blueprint as cross_blueprint
 from indexd.urls.blueprint import blueprint as index_urls_blueprint
 from cachelib import SimpleCache
-
+from sqlalchemy import inspect, text
+from indexd.visibility import VisibilityUnavailable
+from indexd.errors import AuthError, AuthzError
+from indexd.index.errors import NoRecordFound
 
 logger = cdislogging.get_logger("indexd", log_level="debug")
 
@@ -43,6 +46,21 @@ def app_init(app, settings=None):
             IndexBase.metadata.create_all()
             AliasBase.metadata.create_all()
             AuthBase.metadata.create_all()
+            engine = settings["config"]["INDEX"]["driver"].engine
+            if "visibility" not in {
+                column["name"] for column in inspect(engine).get_columns("index_record")
+            }:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE index_record ADD COLUMN visibility VARCHAR NOT NULL DEFAULT 'public'"
+                        )
+                    )
+                    connection.execute(
+                        text(
+                            "CREATE INDEX ix_index_record_visibility ON index_record (visibility)"
+                        )
+                    )
             settings["config"]["INDEX"]["driver"].migrate_index_database()
             settings["config"]["ALIAS"]["driver"].migrate_alias_database()
         else:
@@ -51,6 +69,26 @@ def app_init(app, settings=None):
         logger.info("Auto migrations are disabled")
 
     validate_config(settings)
+
+    @app.errorhandler(VisibilityUnavailable)
+    def visibility_unavailable(error):
+        return flask.jsonify(error="Authorization service unavailable"), 503
+
+    @app.errorhandler(NoRecordFound)
+    def record_not_found(error):
+        return flask.jsonify(error="no record found"), 404
+
+    @app.errorhandler(AuthError)
+    @app.errorhandler(AuthzError)
+    def authorization_error(error):
+        return flask.jsonify(error="Permission denied"), 403
+
+    @app.after_request
+    def private_metadata_response(response):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.vary.add("Authorization")
+        response.vary.add("Cookie")
+        return response
 
     app.auth = settings["auth"]
     app.hostname = os.environ.get("HOSTNAME") or "http://example.io"

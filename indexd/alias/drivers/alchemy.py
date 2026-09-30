@@ -22,7 +22,7 @@ from indexd.alias.errors import NoRecordFound
 from indexd.alias.errors import MultipleRecordsFound
 from indexd.alias.errors import RevisionMismatch
 from indexd.utils import migrate_database
-
+from indexd.visibility import legacy_alias_visible
 
 Base = declarative_base()
 
@@ -156,9 +156,15 @@ class SQLAlchemyAliasDriver(AliasDriverABC):
                     query = query.filter(AliasRecord.name.in_(subq.subquery()))
 
             query = query.order_by(AliasRecord.name)
-            query = query.limit(limit)
-
-            return [i.name for i in query]
+            result = []
+            for record in query:
+                if legacy_alias_visible(
+                    record.size, {h.hash_type: h.hash_value for h in record.hashes}
+                ):
+                    result.append(record.name)
+                    if len(result) >= limit:
+                        break
+            return result
 
     def upsert(
         self,
@@ -247,6 +253,9 @@ class SQLAlchemyAliasDriver(AliasDriverABC):
             metastring = record.metastring
             host_authorities = [h.host for h in record.host_authorities]
             keeper_authority = record.keeper_authority
+
+        if not legacy_alias_visible(size, hashes):
+            raise NoRecordFound("no record found")
 
         ret = {
             "name": name,

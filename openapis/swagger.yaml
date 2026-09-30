@@ -1527,6 +1527,10 @@ definitions:
       - urls
       - form
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       form:
@@ -1585,6 +1589,10 @@ definitions:
       - urls
       - form
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       baseid:
@@ -1625,6 +1633,10 @@ definitions:
   InputBlankInfo:
     type: object
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       uploader:
         type: string
         description: optional; user who uploaded this file
@@ -1656,6 +1668,10 @@ definitions:
   UpdateInputInfo:
     type: object
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       file_name:
         type: string
       metadata:
@@ -1695,6 +1711,10 @@ definitions:
   UpdateAllVersionsInputInfo:
     type: object
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       acl:
         type: array
         items:
@@ -1809,6 +1829,10 @@ definitions:
   OutputInfo:
     type: object
     properties:
+      visibility:
+        type: string
+        enum: [public, restricted]
+        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       baseid:

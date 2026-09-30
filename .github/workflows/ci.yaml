@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   Security:
+    if: github.repository_owner == 'uc-cdis'
     name: Security Pipeline
     uses: uc-cdis/.github/.github/workflows/securitypipeline.yaml@master
     with:
@@ -17,6 +18,7 @@ jobs:
     secrets: inherit
 
   UnitTest:
+    if: github.repository_owner == 'uc-cdis'
     name: Python Unit Test with Postgres
     uses: uc-cdis/.github/.github/workflows/python_unit_test.yaml@master
     with:
