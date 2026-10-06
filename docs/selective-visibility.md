@@ -4,8 +4,11 @@ An optional `visibility` field controls discovery of an IndexD record. Existing
 records and omitted fields on creation default to `public`; this refers to
 metadata, not permission to download bytes. Set `visibility: restricted` and a
 nonempty list of absolute `authz` resource paths to hide the record from callers
-without **fence / read-storage on every resource**, matching Fence's ordinary
-Arborist download check. ACL-only records cannot be restricted.
+without **indexd / read-metadata on every resource**. This discovery action is
+independent of Fence's `read-storage` action on the same dataset resources.
+Grant discovery to a broad group and storage access to a smaller group.
+A download grant alone does not make restricted metadata visible; a discovery
+grant alone does not permit a signed download. ACL-only records cannot be restricted.
 
 ```json
 {"form":"object","size":123,"hashes":{"md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"urls":["s3://example/private.dat"],"authz":["/programs/MMRF/projects/private"],"visibility":"restricted"}
@@ -13,7 +16,7 @@ Arborist download check. ACL-only records cannot be restricted.
 
 Bearer authorization takes precedence over the same-origin `access_token`
 cookie. Arborist validates tokens; IndexD does not trust decoded JWT claims.
-Anonymous Arborist download grants also apply. Validated IndexD Basic service
+Anonymous Arborist read-metadata grants also apply. Validated IndexD Basic service
 credentials can read everything, as can the explicit `indexd/read` action on
 `/services/indexd/admin`. Writer credentials are trusted server credentials and
 must never be distributed to browser users. Configure the existing auth driver
@@ -52,7 +55,7 @@ runbook. Graph nodes must reside under appropriately restricted project resource
 broad metadata policies do not substitute for download grants. Existing public
 federated copies cannot be recalled by changing the local record. Passport-only
 identities still use Fence's existing verified download flow, but discovery needs
-a local Arborist download grant on the caller's token.
+a local Arborist read-metadata grant on the caller's token.
 
 ## Verification
 
@@ -62,3 +65,22 @@ versions, bundles, statistics, aliases and federation. The suite creates and
 removes its test schema. Existing `pytest tests --ignore=tests/visibility` covers
 the public API regressions. The migration also needs the normal operator database
 backup and staged upgrade process before any production use.
+
+## Compatibility and bounded bundle checks
+
+Creating a record without `visibility` continues to publish its metadata, even
+when the caller cannot download it. Existing rows migrate to public. A commons
+opts in by explicitly creating restricted records; there is no new requirement
+to assign visibility roles to existing public records. Until the first restricted
+record exists, IndexD keeps its public read path without contacting Arborist.
+After privacy has been used, the durable history marker enables authorization
+checks and remains set after deletion to protect historical statistics.
+
+Non-administrator bundle pagination scans at most `MAX_BUNDLE_VISIBILITY_ROWS`
+(default 1,000), with at most `MAX_BUNDLE_VISIBILITY_CHECKS` (default 5,000)
+descendant checks across the request and a maximum depth of 64. Exhaustion
+returns 503 without partial results. Use the existing `start` cursor for large
+collections, and tune these server configuration limits after load testing.
+Administrators and commons that have never used privacy keep SQL pagination.
+These limits also apply to nested live bundles, preventing a single oversized
+bundle from bypassing the list scan bound.

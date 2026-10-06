@@ -1530,7 +1530,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       form:
@@ -1592,7 +1592,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       baseid:
@@ -1636,7 +1636,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       uploader:
         type: string
         description: optional; user who uploaded this file
@@ -1671,7 +1671,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       file_name:
         type: string
       metadata:
@@ -1714,7 +1714,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       acl:
         type: array
         items:
@@ -1832,7 +1832,7 @@ definitions:
       visibility:
         type: string
         enum: [public, restricted]
-        description: Restricted records require fence/read-storage on every authz resource. Creation defaults to public; new versions inherit visibility.
+        description: Restricted metadata requires indexd/read-metadata on every authz resource; downloads independently require fence/read-storage. Creation defaults to public; new versions inherit visibility.
       did:
         $ref: "#/definitions/DID"
       baseid:
