@@ -28,4 +28,7 @@ jobs:
           python-version: '3.13'
       - run: pip install poetry==2.3.3
       - run: poetry install --no-interaction
-      - run: poetry run pytest tests/visibility && poetry run pytest tests --ignore=tests/visibility
+      - id: visibility
+        run: poetry run pytest tests/visibility
+      - if: ${{ !cancelled() && (steps.visibility.conclusion == 'success' || steps.visibility.conclusion == 'failure') }}
+        run: poetry run pytest tests --ignore=tests/visibility
