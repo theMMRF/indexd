@@ -29,7 +29,7 @@ def create(client, visibility="public", authz=None, size=10):
     return response.json
 
 
-def allow(app, resources=(RESOURCE,), service="fence", method="read-storage"):
+def allow(app, resources=(RESOURCE,), service="indexd", method="read-metadata"):
     app.auth.arborist.auth_mapping.return_value = {
         resource: [{"service": service, "method": method}] for resource in resources
     }
@@ -275,3 +275,42 @@ def test_denied_writes_do_not_reveal_private_guid(app, client, method, suffix, p
         options["json"] = payload
     assert request("/index/" + private["did"] + suffix, **options).status_code == 404
     assert request("/index/" + str(uuid.uuid4()) + suffix, **options).status_code == 404
+
+
+def test_download_and_discovery_permissions_are_independent(app, client):
+    private = create(client, "restricted")
+    allow(app, service="fence", method="read-storage")
+    assert client.get("/index/" + private["did"]).status_code == 404
+    allow(app, service="indexd", method="read-metadata")
+    assert client.get("/index/" + private["did"]).status_code == 200
+    # Discovery does not add a Fence action or change the file's data ACLs.
+    assert client.get("/index/" + private["did"]).json["authz"] == [RESOURCE]
+    assert app.auth.arborist.auth_mapping.return_value[RESOURCE] == [
+        {"service": "indexd", "method": "read-metadata"}
+    ]
+
+
+def test_public_only_commons_preserves_reads_during_arborist_outage(app, client):
+    public = create(client)
+    app.auth.arborist.auth_mapping.side_effect = RuntimeError("outage")
+    assert client.get("/index/" + public["did"]).status_code == 200
+    assert len(client.get("/index/").json["records"]) == 1
+    app.auth.arborist.auth_mapping.assert_not_called()
+
+
+def test_bundle_scans_and_descendant_lookups_are_bounded(app, client):
+    private = create(client, "restricted")
+    for _ in range(3):
+        assert (
+            client.post(
+                "/bundle/", json={"bundles": [private["did"]]}, headers=ADMIN
+            ).status_code
+            == 200
+        )
+    app.config["MAX_BUNDLE_VISIBILITY_ROWS"] = 2
+    assert client.get("/bundle/?page=9999").status_code == 503
+    # Admin pagination remains SQL-based and is unaffected by the scan budget.
+    assert client.get("/bundle/?page=9999", headers=ADMIN).status_code == 200
+    app.config["MAX_BUNDLE_VISIBILITY_ROWS"] = 1000
+    app.config["MAX_BUNDLE_VISIBILITY_CHECKS"] = 1
+    assert client.get("/bundle/").status_code == 503

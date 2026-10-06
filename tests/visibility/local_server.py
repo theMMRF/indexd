@@ -20,7 +20,7 @@ RESOURCE = "/programs/MMRF/projects/private-sdk-test"
 class TestArborist:
     def auth_mapping(self, jwt=""):
         if jwt == "allowed":
-            return {RESOURCE: [{"service": "fence", "method": "read-storage"}]}
+            return {RESOURCE: [{"service": "indexd", "method": "read-metadata"}]}
         return {}
 
     def auth_request(self, *args, **kwargs):

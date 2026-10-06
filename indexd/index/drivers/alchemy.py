@@ -1,3 +1,4 @@
+from flask import current_app
 from sqlalchemy import event
 import datetime
 import uuid
@@ -30,6 +31,7 @@ from indexd.visibility import (
     visible_stats,
     require_visible_bundle,
     visibility_access,
+    VisibilityUnavailable,
     mark_record_restricted,
     authorize_private_write,
 )
@@ -1917,9 +1919,19 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
             if start is not None:
                 query = query.filter(DrsBundleRecord.bundle_id > start)
             offset = limit * (page or 0)
+            if visibility_access()[0]:
+                return [
+                    record.to_document_dict()
+                    for record in query.offset(offset).limit(limit)
+                ]
+            scan_limit = current_app.config.get("MAX_BUNDLE_VISIBILITY_ROWS", 1000)
             result = []
             visible_count = 0
-            for record in query.yield_per(100):
+            for scanned, record in enumerate(
+                query.limit(scan_limit + 1).yield_per(100)
+            ):
+                if scanned >= scan_limit:
+                    raise VisibilityUnavailable("Bundle visibility scan limit exceeded")
                 try:
                     if not visibility_access()[0]:
                         require_visible_bundle(self, record.to_document_dict(True))

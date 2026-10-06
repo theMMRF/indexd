@@ -1,4 +1,4 @@
-"""Request-scoped visibility, using the same Arborist action as Fence downloads."""
+"""Request-scoped visibility, independent of Fence download authorization."""
 
 from contextvars import ContextVar
 
@@ -36,7 +36,7 @@ def _allows(actions, service, method):
 
 
 def visibility_access():
-    """Return (administrator, downloadable resources), cached only for this request.
+    """Return (administrator, metadata-readable resources), cached only for this request.
 
     Background migration/indexing code keeps access to the complete database.
     Basic credentials are validated by the existing IndexD auth driver. Bearer
@@ -47,6 +47,17 @@ def visibility_access():
     cached = getattr(g, "indexd_visibility_access", None)
     if cached is not None and cached[0] is request._get_current_object():
         return cached[1]
+    # A commons opts in by creating its first restricted record. Public-only
+    # installations retain their unauthenticated read path, including during an
+    # Arborist outage. The sticky marker also protects historical private totals.
+    from indexd.index.drivers.alchemy import VisibilityState
+
+    driver = current_app.config["INDEX"]["driver"]
+    with driver.session as session:
+        if session.query(VisibilityState).first() is None:
+            result = True, frozenset()
+            g.indexd_visibility_access = (request._get_current_object(), result)
+            return result
     authorization = request.authorization
     if authorization and authorization.type == "basic":
         current_app.auth.auth(authorization.username, authorization.password)
@@ -78,7 +89,7 @@ def visibility_access():
                 resources = frozenset(
                     resource
                     for resource, actions in mapping.items()
-                    if _allows(actions, "fence", "read-storage")
+                    if _allows(actions, "indexd", "read-metadata")
                 )
                 result = admin, resources
             except Exception as exc:
@@ -93,8 +104,8 @@ def visibility_access():
 def visibility_filter(model):
     """SQL predicate applied BEFORE pagination, projection and aggregation.
 
-    Fence requires access to every resource in authz. Array containment and the
-    relational NOT EXISTS predicate preserve that same AND semantics.
+    Metadata reads require indexd/read-metadata on every resource in authz.
+    Storage access remains a separate Fence permission on those resources.
     """
     admin, resources = visibility_access()
     if admin:
@@ -177,7 +188,6 @@ def require_visible_bundle(driver, document):
     A bundle is visible only when every referenced object is visible. Missing or
     deleted members also hide it, so historical cached metadata cannot leak.
     """
-    visiting = _bundle_visiting.get()
 
     def check(contents):
         for item in contents:
@@ -185,6 +195,9 @@ def require_visible_bundle(driver, document):
             visiting = _bundle_visiting.get()
             if not identifier or identifier in visiting:
                 raise NoRecordFound("no record found")
+            consume_bundle_visibility_budget()
+            if len(visiting) >= 64:
+                raise VisibilityUnavailable("Bundle visibility depth limit exceeded")
             context = _bundle_visiting.set(visiting | {identifier})
             try:
                 driver.get_with_nonstrict_prefix(identifier)
@@ -230,3 +243,16 @@ def legacy_alias_visible(size, hashes):
                 )
             )
         return query.first() is None
+
+
+def consume_bundle_visibility_budget():
+    """Bound descendant lookups across all bundles in a single HTTP request."""
+    if not has_request_context():
+        return
+    current = request._get_current_object()
+    cached = getattr(g, "indexd_bundle_checks", None)
+    count = cached[1] if cached is not None and cached[0] is current else 0
+    count += 1
+    if count > current_app.config.get("MAX_BUNDLE_VISIBILITY_CHECKS", 5000):
+        raise VisibilityUnavailable("Bundle visibility lookup limit exceeded")
+    g.indexd_bundle_checks = current, count
