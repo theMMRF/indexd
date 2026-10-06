@@ -33,12 +33,10 @@ jobs:
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            [[ "$GITHUB_REF_NAME" == "ecr-$sha" ]] || {
-              echo 'Use an ecr-<full commit SHA> tag pointing to that exact commit.' >&2
-              exit 1
-            }
-          fi
+          [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == "ecr-$sha" ]] || {
+            echo 'Select an ecr-<full commit SHA> tag pointing to that exact commit.' >&2
+            exit 1
+          }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$sha" >> "$GITHUB_OUTPUT"
       - name: Authenticate to AWS using GitHub OIDC

@@ -5,6 +5,12 @@ on: pull_request
 jobs:
   integration_tests:
     if: github.repository_owner == 'uc-cdis'
+    # The reusable workflow's permissions are validated before its owner guard.
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      issues: write
     name: Integration tests
     uses: uc-cdis/.github/.github/workflows/integration_tests.yaml@master
     with:

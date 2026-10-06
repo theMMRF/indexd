@@ -11,6 +11,8 @@ RUN chown -R gen3:gen3 /${appname}
 
 # Builder stage
 FROM base AS builder
+ARG GIT_COMMIT
+ARG GIT_VERSION
 
 USER root
 RUN chown -R gen3:gen3 /venv
@@ -26,8 +28,8 @@ COPY --chown=gen3:gen3 . /${appname}
 
 RUN poetry install -vv --no-interaction --without dev
 
-RUN git config --global --add safe.directory ${appname} && COMMIT=`git rev-parse HEAD` && echo "COMMIT=\"${COMMIT}\"" > ${appname}/version_data.py \
-    && VERSION=`git describe --always --tags` && echo "VERSION=\"${VERSION}\"" >> ${appname}/version_data.py
+RUN git config --global --add safe.directory ${appname} && COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}" && echo "COMMIT=\"${COMMIT}\"" > ${appname}/version_data.py \
+    && VERSION="${GIT_VERSION:-$(git describe --always --tags)}" && echo "VERSION=\"${VERSION}\"" >> ${appname}/version_data.py
 
 
 # Final stage
