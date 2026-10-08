@@ -19,7 +19,9 @@ from .guid.blueprint import blueprint as indexd_drs_blueprint
 from .blueprint import blueprint as cross_blueprint
 from indexd.urls.blueprint import blueprint as index_urls_blueprint
 from cachelib import SimpleCache
-
+from indexd.visibility import VisibilityUnavailable
+from indexd.errors import AuthError, AuthzError
+from indexd.index.errors import NoRecordFound
 
 logger = cdislogging.get_logger("indexd", log_level="debug")
 
@@ -35,6 +37,18 @@ def app_init(app, settings=None):
     if not settings:
         from .default_settings import settings
     app.config.update(settings["config"])
+    configured_visibility = app.config.get(
+        "PROJECT_VISIBILITY_ENABLED",
+        os.environ.get("PROJECT_VISIBILITY_ENABLED", "false"),
+    )
+    if type(configured_visibility) not in (bool, str) or configured_visibility not in (
+        True,
+        False,
+        "true",
+        "false",
+    ):
+        raise ValueError("PROJECT_VISIBILITY_ENABLED must be a boolean or true/false")
+    app.config["PROJECT_VISIBILITY_ENABLED"] = configured_visibility in (True, "true")
 
     if settings.get("AUTO_MIGRATE", True):
         engine_name = settings["config"]["INDEX"]["driver"].engine.dialect.name
@@ -51,6 +65,26 @@ def app_init(app, settings=None):
         logger.info("Auto migrations are disabled")
 
     validate_config(settings)
+
+    @app.errorhandler(VisibilityUnavailable)
+    def visibility_unavailable(error):
+        return flask.jsonify(error="Authorization service unavailable"), 503
+
+    @app.errorhandler(NoRecordFound)
+    def record_not_found(error):
+        return flask.jsonify(error="no record found"), 404
+
+    @app.errorhandler(AuthError)
+    @app.errorhandler(AuthzError)
+    def authorization_error(error):
+        return flask.jsonify(error="Permission denied"), 403
+
+    @app.after_request
+    def private_metadata_response(response):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.vary.add("Authorization")
+        response.vary.add("Cookie")
+        return response
 
     app.auth = settings["auth"]
     app.hostname = os.environ.get("HOSTNAME") or "http://example.io"

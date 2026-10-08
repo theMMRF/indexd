@@ -352,7 +352,9 @@ def update_all_index_record_versions(record):
     acl = request_json.get("acl")
     authz = request_json.get("authz")
     # authorization and error handling done in driver
-    ret = blueprint.index_driver.update_all_versions(record, acl=acl, authz=authz)
+    ret = blueprint.index_driver.update_all_versions(
+        record, acl=acl, authz=authz
+    )
 
     return flask.jsonify(ret), 200
 
@@ -478,7 +480,9 @@ def post_index_blank_record():
 
     # authorize done in add_blank_record
     did, rev, baseid = blueprint.index_driver.add_blank_record(
-        uploader=uploader, file_name=file_name, authz=authz
+        uploader=uploader,
+        file_name=file_name,
+        authz=authz,
     )
 
     ret = {"did": did, "rev": rev, "baseid": baseid}
@@ -590,7 +594,7 @@ def add_index_record_version(record):
     size = flask.request.json["size"]
     urls = flask.request.json["urls"]
     acl = flask.request.json.get("acl", [])
-    authz = flask.request.json.get("authz", [])
+    authz = flask.request.json.get("authz")
     hashes = flask.request.json["hashes"]
     file_name = flask.request.json.get("file_name")
     metadata = flask.request.json.get("metadata")

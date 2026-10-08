@@ -2,5 +2,6 @@
     "db_host": "localhost",
     "db_username": "postgres",
     "db_database": "indexd_tests",
-    "fence_database": "fence_db"
+    "fence_database": "fence_db",
+    "db_password": "postgres"
 }

@@ -7,6 +7,7 @@ on:
 
 jobs:
   PyPIPoetryPublish:
+    if: github.repository_owner == 'uc-cdis'
     name: PyPI Poetry Publish
     uses: uc-cdis/.github/.github/workflows/python_package_index_publish.yaml@master
     with:

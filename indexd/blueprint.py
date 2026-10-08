@@ -54,6 +54,8 @@ def get_record(record):
         try:
             ret = blueprint.index_driver.get_by_alias(record)
         except IndexNoRecordFound:
+            if blueprint.index_driver.has_local_identifier(record):
+                raise IndexNoRecordFound("no record found")
             try:
                 ret = blueprint.alias_driver.get(record)
             except AliasNoRecordFound:
