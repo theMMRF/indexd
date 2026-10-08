@@ -120,6 +120,9 @@ def authorize_private_write(record, method):
         if record.__tablename__ == "record"
         else [entry.resource for entry in record.authz]
     )
+    admin, readable = visibility_access()
+    if not admin and (not resources or not set(resources).issubset(readable)):
+        raise NoRecordFound("no record found")
     try:
         auth.authorize(method, resources)
     except Exception as exc:

@@ -274,9 +274,12 @@ def test_deleting_private_record_does_not_publish_historical_totals(app, client)
         ("put", "/versions", {"authz": ["/open"]}),
     ],
 )
-def test_denied_writes_do_not_reveal_private_guid(app, client, method, suffix, payload):
+@pytest.mark.parametrize("can_write", [False, True])
+def test_denied_writes_do_not_reveal_private_guid(
+    app, client, method, suffix, payload, can_write
+):
     private = create(client, "restricted")
-    app.auth.arborist.auth_request.return_value = False
+    app.auth.arborist.auth_request.return_value = can_write
     request = getattr(client, method)
     options = {"headers": {"Authorization": "Bearer metadata-only"}}
     if payload is not None:
