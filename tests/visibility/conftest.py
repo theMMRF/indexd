@@ -31,12 +31,13 @@ def app(request):
     auth = SQLAlchemyAuthDriver(connection)
     auth.add("test", "test")
     auth.arborist = MagicMock()
-    auth.arborist.auth_mapping.return_value = {}
+    auth.arborist.auth_mapping.return_value = {"/open": [{"service": "indexd", "method": "read-metadata"}]}
     app = get_app(
         {
             "AUTO_MIGRATE": False,
             "config": {
                 "TESTING": True,
+                "PROJECT_VISIBILITY_ENABLED": True,
                 "INDEX": {"driver": driver},
                 "ALIAS": {"driver": SQLAlchemyAliasDriver(connection)},
                 "DIST": [],

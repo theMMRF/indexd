@@ -1,5 +1,4 @@
 from flask import current_app
-from sqlalchemy import event
 import datetime
 import uuid
 
@@ -29,13 +28,11 @@ from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from contextlib import contextmanager
 
 from indexd.visibility import (
-    validate_visibility,
     visibility_filter,
     visible_stats,
     require_visible_bundle,
     visibility_access,
     VisibilityUnavailable,
-    mark_record_restricted,
     authorize_private_write,
 )
 from indexd import auth
@@ -77,9 +74,6 @@ class Record(Base):
     version = Column(String)
     uploader = Column(String)
     description = Column(String)
-    visibility = Column(
-        String, nullable=False, default="public", server_default="public", index=True
-    )
     content_created_date = Column(DateTime)
     content_updated_date = Column(DateTime)
     hashes = Column(JSONB, index=True)
@@ -110,7 +104,6 @@ class Record(Base):
 
         return {
             "did": self.guid,
-            "visibility": self.visibility,
             "baseid": self.baseid,
             "rev": self.rev,
             "size": self.size,
@@ -454,7 +447,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
-        visibility="public",
     ):
         """
         Creates a new record given size, urls, acl, authz, hashes, metadata,
@@ -462,7 +454,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         if guid is provided, update the new record with the guid otherwise create it
         """
 
-        validate_visibility(visibility, authz)
         urls = urls or []
         acl = acl or []
         authz = authz or []
@@ -472,7 +463,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = Record()
-            record.visibility = visibility
 
             if not baseid:
                 baseid = str(uuid.uuid4())
@@ -531,13 +521,12 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             return record.guid, record.rev, record.baseid
 
     def add_blank_record(
-        self, uploader, file_name=None, authz=None, visibility="public"
+        self, uploader, file_name=None, authz=None
     ):
         """
         Create a new blank record with only uploader and optionally
         file_name and authz fields filled
         """
-        validate_visibility(visibility, authz)
         # if an authz is provided, ensure that user can actually create for that resource
         authorized = False
         authz_err_msg = "Auth error when attempting to update a blank record. User must have '{}' access on '{}' for service 'indexd'."
@@ -562,7 +551,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = Record()
-            record.visibility = visibility
 
             did = str(uuid.uuid4())
             baseid = str(uuid.uuid4())
@@ -605,9 +593,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
             authorize_private_write(record, "update")
 
-            validate_visibility(
-                record.visibility, authz if authz is not None else (record.authz or [])
-            )
 
             if record.size or record.hashes:
                 raise UserError("update api is not supported for non-empty record!")
@@ -935,10 +920,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             if rev != record.rev:
                 raise RevisionMismatch("Revision mismatch")
 
-            validate_visibility(
-                changing_fields.get("visibility", record.visibility),
-                changing_fields.get("authz", (record.authz or [])),
-            )
 
             # Some operations are dependant on other operations. For example
             # urls has to be updated before url_metadata because of schema
@@ -1047,7 +1028,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
-        visibility=None,
     ):
         """
         Add a record version given guid
@@ -1072,15 +1052,12 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
             authorize_private_write(record, "update")
 
-            visibility = record.visibility if visibility is None else visibility
-            if supplied_authz is None and visibility == "restricted":
+            if supplied_authz is None and current_app.config.get("PROJECT_VISIBILITY_ENABLED", False):
                 authz = record.authz or []
-            validate_visibility(visibility, authz)
             auth.authorize("update", record.authz + authz)
 
             baseid = record.baseid
             record = Record()
-            record.visibility = visibility
             guid = new_did
             if not guid:
                 guid = str(uuid.uuid4())
@@ -1159,7 +1136,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 raise MultipleRecordsFound("{guid} already exists".format(guid=new_did))
 
             new_record = Record()
-            new_record.visibility = old_record.visibility
             guid = new_did
             if not guid:
                 guid = str(uuid.uuid4())
@@ -1178,7 +1154,6 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
                 old_acl = old_record.acl
                 new_record.acl = old_acl
             new_record.authz = authz
-            validate_visibility(new_record.visibility, authz)
 
             try:
                 session.add(new_record)
@@ -1228,7 +1203,7 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
 
         return ret
 
-    def update_all_versions(self, guid, acl=None, authz=None, visibility=None):
+    def update_all_versions(self, guid, acl=None, authz=None):
         """
         Update all record versions with new acl and authz
         """
@@ -1265,22 +1240,11 @@ class SingleTableSQLAlchemyIndexDriver(IndexDriverABC):
             auth.authorize("update", list(all_resources))
 
             ret = []
-            if authz is not None and (
-                visibility == "restricted"
-                or any(candidate.visibility == "restricted" for candidate in records)
-            ):
+            if authz is not None and current_app.config.get("PROJECT_VISIBILITY_ENABLED", False):
                 auth.authorize("update", authz)
-            for candidate in records:
-                candidate_authz = candidate.authz or []
-                validate_visibility(
-                    visibility if visibility is not None else candidate.visibility,
-                    authz if authz is not None else candidate_authz,
-                )
 
             # Update fields for all versions
             for record in records:
-                if visibility is not None:
-                    record.visibility = visibility
                 if acl is not None:
                     record.acl = list(set(acl))
                 if authz is not None:
@@ -1724,7 +1688,3 @@ def get_record_if_exists(did, session):
     If no record found, returns None.
     """
     return session.query(Record).filter(Record.guid == did).first()
-
-
-event.listen(Record, "after_insert", mark_record_restricted)
-event.listen(Record, "after_update", mark_record_restricted)

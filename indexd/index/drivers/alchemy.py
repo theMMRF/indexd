@@ -1,5 +1,4 @@
 from flask import current_app
-from sqlalchemy import event
 import datetime
 import uuid
 import json
@@ -26,13 +25,11 @@ from sqlalchemy.orm import joinedload, relationship, sessionmaker
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 
 from indexd.visibility import (
-    validate_visibility,
     visibility_filter,
     visible_stats,
     require_visible_bundle,
     visibility_access,
     VisibilityUnavailable,
-    mark_record_restricted,
     authorize_private_write,
 )
 from indexd import auth
@@ -74,13 +71,6 @@ class IndexSchemaVersion(Base):
     version = Column(Integer, default=0, primary_key=True)
 
 
-class VisibilityState(Base):
-    """Sticky marker: historical global totals remain private after deletion."""
-
-    __tablename__ = "record_visibility_state"
-    id = Column(Integer, primary_key=True)
-
-
 class IndexRecord(Base):
     """
     Base index record representation.
@@ -100,9 +90,6 @@ class IndexRecord(Base):
     version = Column(String, index=True)
     uploader = Column(String, index=True)
     description = Column(String)
-    visibility = Column(
-        String, nullable=False, default="public", server_default="public", index=True
-    )
     content_created_date = Column(DateTime)
     content_updated_date = Column(DateTime)
 
@@ -158,7 +145,6 @@ class IndexRecord(Base):
 
         return {
             "did": self.did,
-            "visibility": self.visibility,
             "baseid": self.baseid,
             "rev": self.rev,
             "size": self.size,
@@ -829,14 +815,12 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
-        visibility="public",
     ):
         """
         Creates a new record given size, urls, acl, authz, hashes, metadata,
         urls_metadata file name and version
         if did is provided, update the new record with the did otherwise create it
         """
-        validate_visibility(visibility, authz)
         urls = urls or []
         acl = acl or []
         authz = authz or []
@@ -846,7 +830,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = IndexRecord()
-            record.visibility = visibility
 
             base_version = BaseVersion()
             if not baseid:
@@ -917,13 +900,12 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
             return record.did, record.rev, record.baseid
 
     def add_blank_record(
-        self, uploader, file_name=None, authz=None, visibility="public"
+        self, uploader, file_name=None, authz=None
     ):
         """
         Create a new blank record with only uploader and optionally
         file_name and authz fields filled
         """
-        validate_visibility(visibility, authz)
         # if an authz is provided, ensure that user can actually create for that resource
         authorized = False
         authz_err_msg = "Auth error when attempting to update a blank record. User must have '{}' access on '{}' for service 'indexd'."
@@ -948,7 +930,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
 
         with self.session as session:
             record = IndexRecord()
-            record.visibility = visibility
             base_version = BaseVersion()
 
             did = str(uuid.uuid4())
@@ -1017,10 +998,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
 
             authorize_private_write(record, "update")
 
-            validate_visibility(
-                record.visibility,
-                authz if authz is not None else [u.resource for u in record.authz],
-            )
 
             if record.size or record.hashes:
                 raise UserError("update api is not supported for non-empty record!")
@@ -1362,10 +1339,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
             if rev != record.rev:
                 raise RevisionMismatch("revision mismatch")
 
-            validate_visibility(
-                changing_fields.get("visibility", record.visibility),
-                changing_fields.get("authz", [u.resource for u in record.authz]),
-            )
 
             # Some operations are dependant on other operations. For example
             # urls has to be updated before urls_metadata because of schema
@@ -1502,7 +1475,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
         description=None,
         content_created_date=None,
         content_updated_date=None,
-        visibility=None,
     ):
         """
         Add a record version given did
@@ -1527,15 +1499,12 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
 
             authorize_private_write(record, "update")
 
-            visibility = record.visibility if visibility is None else visibility
-            if supplied_authz is None and visibility == "restricted":
+            if supplied_authz is None and current_app.config.get("PROJECT_VISIBILITY_ENABLED", False):
                 authz = [u.resource for u in record.authz]
-            validate_visibility(visibility, authz)
             auth.authorize("update", [u.resource for u in record.authz] + authz)
 
             baseid = record.baseid
             record = IndexRecord()
-            record.visibility = visibility
             did = new_did
             if not did:
                 did = str(uuid.uuid4())
@@ -1626,7 +1595,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
                 raise MultipleRecordsFound("{did} already exists".format(did=new_did))
 
             new_record = IndexRecord()
-            new_record.visibility = old_record.visibility
             did = new_did
             if not did:
                 did = str(uuid.uuid4())
@@ -1646,7 +1614,6 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
                 new_record.acl = [
                     IndexRecordACE(did=did, ace=ace) for ace in set(old_acl)
                 ]
-            validate_visibility(new_record.visibility, authz)
             new_record.authz = [
                 IndexRecordAuthz(did=did, resource=resource) for resource in set(authz)
             ]
@@ -1697,7 +1664,7 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
 
         return ret
 
-    def update_all_versions(self, did, acl=None, authz=None, visibility=None):
+    def update_all_versions(self, did, acl=None, authz=None):
         """
         Update all record versions with new acl and authz
         """
@@ -1730,23 +1697,12 @@ class SQLAlchemyIndexDriver(IndexDriverABC):
             all_resources = {r.resource for rec in records for r in rec.authz}
             auth.authorize("update", list(all_resources))
 
-            if authz is not None and (
-                visibility == "restricted"
-                or any(candidate.visibility == "restricted" for candidate in records)
-            ):
+            if authz is not None and current_app.config.get("PROJECT_VISIBILITY_ENABLED", False):
                 auth.authorize("update", authz)
-            for candidate in records:
-                candidate_authz = [r.resource for r in candidate.authz]
-                validate_visibility(
-                    visibility if visibility is not None else candidate.visibility,
-                    authz if authz is not None else candidate_authz,
-                )
 
             ret = []
             # Update fields for all versions
             for record in records:
-                if visibility is not None:
-                    record.visibility = visibility
                 if acl:
                     record.acl = [
                         IndexRecordACE(did=record.did, ace=ace) for ace in set(acl)
@@ -2249,7 +2205,3 @@ SCHEMA_MIGRATION_FUNCTIONS = [
     migrate_13,
 ]
 CURRENT_SCHEMA_VERSION = len(SCHEMA_MIGRATION_FUNCTIONS)
-
-
-event.listen(IndexRecord, "after_insert", mark_record_restricted)
-event.listen(IndexRecord, "after_update", mark_record_restricted)

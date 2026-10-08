@@ -215,7 +215,6 @@ class IndexRecordMigrator:
             records_to_insert.append(
                 Record(
                     guid=record.did,
-                    visibility=record.visibility,
                     baseid=record.baseid,
                     rev=record.rev,
                     form=record.form,

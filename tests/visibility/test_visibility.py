@@ -19,8 +19,11 @@ def create(client, visibility="public", authz=None, size=10):
         "hashes": {"md5": "a" * 32},
         "size": size,
         "urls": ["s3://test/secret.txt"],
-        "authz": authz or [RESOURCE],
-        "visibility": visibility,
+        "authz": (
+            authz
+            if authz is not None
+            else ([RESOURCE] if visibility == "restricted" else ["/open"])
+        ),
         "file_name": "secret.txt",
         "metadata": {"sensitive": "secret"},
     }
@@ -31,7 +34,10 @@ def create(client, visibility="public", authz=None, size=10):
 
 def allow(app, resources=(RESOURCE,), service="indexd", method="read-metadata"):
     app.auth.arborist.auth_mapping.return_value = {
-        resource: [{"service": service, "method": method}] for resource in resources
+        "/open": [{"service": "indexd", "method": "read-metadata"}],
+        **{
+            resource: [{"service": service, "method": method}] for resource in resources
+        },
     }
 
 
@@ -176,7 +182,7 @@ def test_version_inherits_restriction_and_cannot_clear_authz(app, client):
     assert response.status_code == 200, response.json
     new = response.json
     record = client.get("/index/" + new["did"], headers=ADMIN).json
-    assert record["visibility"] == "restricted"
+    assert "visibility" not in record
     assert record["authz"] == [RESOURCE]
     assert client.get("/index/" + new["did"]).status_code == 404
     assert (
@@ -185,12 +191,13 @@ def test_version_inherits_restriction_and_cannot_clear_authz(app, client):
             json={"authz": []},
             headers=ADMIN,
         ).status_code
-        == 400
+        == 200
     )
+    assert client.get("/index/" + new["did"]).status_code == 404
     assert (
         client.put(
             "/index/" + private["did"] + "/versions",
-            json={"visibility": "public"},
+            json={"authz": ["/open"]},
             headers=ADMIN,
         ).status_code
         == 200
@@ -207,7 +214,7 @@ def test_bundle_snapshot_hidden_after_member_restriction(app, client):
     assert (
         client.put(
             "/index/" + public["did"] + "?rev=" + public["rev"],
-            json={"visibility": "restricted"},
+            json={"authz": [RESOURCE]},
             headers=ADMIN,
         ).status_code
         == 200
@@ -227,9 +234,10 @@ def test_restricted_requires_real_resources(app, client, authz):
         "size": 1,
         "urls": [],
         "authz": authz,
-        "visibility": "restricted",
     }
-    assert client.post("/index/", json=payload, headers=ADMIN).status_code == 400
+    created = client.post("/index/", json=payload, headers=ADMIN)
+    assert created.status_code == 200, created.json
+    assert client.get("/index/" + created.json["did"]).status_code == 404
 
 
 def test_deleting_private_record_does_not_publish_historical_totals(app, client):
@@ -263,7 +271,7 @@ def test_deleting_private_record_does_not_publish_historical_totals(app, client)
             "",
             {"form": "object", "hashes": {"md5": "a" * 32}, "size": 1, "urls": []},
         ),
-        ("put", "/versions", {"visibility": "public"}),
+        ("put", "/versions", {"authz": ["/open"]}),
     ],
 )
 def test_denied_writes_do_not_reveal_private_guid(app, client, method, suffix, payload):
@@ -291,7 +299,8 @@ def test_download_and_discovery_permissions_are_independent(app, client):
 
 
 def test_public_only_commons_preserves_reads_during_arborist_outage(app, client):
-    public = create(client)
+    public = create(client, "restricted")
+    app.config["PROJECT_VISIBILITY_ENABLED"] = False
     app.auth.arborist.auth_mapping.side_effect = RuntimeError("outage")
     assert client.get("/index/" + public["did"]).status_code == 200
     assert len(client.get("/index/").json["records"]) == 1

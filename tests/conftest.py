@@ -52,7 +52,6 @@ def clear_database():
             "base_version",
             "record",
             "stats",
-            "record_visibility_state",
         ]
 
         for table_name in table_delete_order:

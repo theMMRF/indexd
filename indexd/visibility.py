@@ -3,28 +3,13 @@
 from contextvars import ContextVar
 
 from flask import current_app, g, has_request_context, request
-from sqlalchemy import and_, or_, true
+from sqlalchemy import and_, true
 
-from indexd.errors import UserError
 from indexd.index.errors import NoRecordFound
 
 
 class VisibilityUnavailable(Exception):
     """Visibility could not be checked safely."""
-
-
-def validate_visibility(visibility, authz):
-    if visibility not in ("public", "restricted"):
-        raise UserError("visibility must be public or restricted")
-    if visibility == "restricted" and (
-        not isinstance(authz, list)
-        or not authz
-        or any(
-            not isinstance(resource, str) or not resource.startswith("/")
-            for resource in authz
-        )
-    ):
-        raise UserError("Restricted records require nonempty authz resource paths")
 
 
 def _allows(actions, service, method):
@@ -47,17 +32,9 @@ def visibility_access():
     cached = getattr(g, "indexd_visibility_access", None)
     if cached is not None and cached[0] is request._get_current_object():
         return cached[1]
-    # A commons opts in by creating its first restricted record. Public-only
-    # installations retain their unauthenticated read path, including during an
-    # Arborist outage. The sticky marker also protects historical private totals.
-    from indexd.index.drivers.alchemy import VisibilityState
-
-    driver = current_app.config["INDEX"]["driver"]
-    with driver.session as session:
-        if session.query(VisibilityState).first() is None:
-            result = True, frozenset()
-            g.indexd_visibility_access = (request._get_current_object(), result)
-            return result
+    # Site-level opt-in: no record or database schema mutation is required.
+    if not current_app.config.get("PROJECT_VISIBILITY_ENABLED", False):
+        return True, frozenset()
     authorization = request.authorization
     if authorization and authorization.type == "basic":
         current_app.auth.auth(authorization.username, authorization.password)
@@ -110,9 +87,10 @@ def visibility_filter(model):
     admin, resources = visibility_access()
     if admin:
         return true()
-    public = model.visibility == "public"
     if not resources:
-        return public
+        from sqlalchemy import false
+
+        return false()
     if model.__tablename__ == "record":
         allowed = and_(
             model.authz != None,
@@ -126,12 +104,14 @@ def visibility_filter(model):
             model.authz.any(),
             ~model.authz.any(~IndexRecordAuthz.resource.in_(resources)),
         )
-    return or_(public, and_(model.visibility == "restricted", allowed))
+    return allowed
 
 
 def authorize_private_write(record, method):
     """Mask denied mutations before revision/shape errors reveal a private GUID."""
-    if record.visibility != "restricted" or not has_request_context():
+    if not has_request_context() or not current_app.config.get(
+        "PROJECT_VISIBILITY_ENABLED", False
+    ):
         return
     from indexd import auth
 
@@ -146,30 +126,14 @@ def authorize_private_write(record, method):
         raise NoRecordFound("no record found") from exc
 
 
-def mark_record_restricted(mapper, connection, record):
-    """Persist privacy use in the same transaction as the record write."""
-    if record.visibility == "restricted":
-        from sqlalchemy import text
-
-        connection.execute(
-            text(
-                "INSERT INTO record_visibility_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
-            )
-        )
-
-
 def visible_stats(driver, model, month=None, year=None):
     import datetime
     from sqlalchemy import func
-    from indexd.index.drivers.alchemy import VisibilityState, get_stats
+    from indexd.index.drivers.alchemy import get_stats
 
     with driver.session as session:
         admin, _ = visibility_access()
-        restricted_used = session.query(VisibilityState).first() is not None
-        if admin or (
-            not restricted_used
-            and not session.query(model).filter(model.visibility != "public").first()
-        ):
+        if admin:
             return get_stats(session, month, year)
         query = session.query(
             func.count(), func.coalesce(func.sum(model.size), 0)

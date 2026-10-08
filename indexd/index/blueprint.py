@@ -353,7 +353,7 @@ def update_all_index_record_versions(record):
     authz = request_json.get("authz")
     # authorization and error handling done in driver
     ret = blueprint.index_driver.update_all_versions(
-        record, acl=acl, authz=authz, visibility=request_json.get("visibility")
+        record, acl=acl, authz=authz
     )
 
     return flask.jsonify(ret), 200
@@ -460,7 +460,6 @@ def post_index_record():
         description=description,
         content_created_date=content_created_date,
         content_updated_date=content_updated_date,
-        visibility=flask.request.json.get("visibility", "public"),
     )
 
     ret = {"did": did, "rev": rev, "baseid": baseid}
@@ -484,7 +483,6 @@ def post_index_blank_record():
         uploader=uploader,
         file_name=file_name,
         authz=authz,
-        visibility=body.get("visibility", "public"),
     )
 
     ret = {"did": did, "rev": rev, "baseid": baseid}
@@ -632,7 +630,6 @@ def add_index_record_version(record):
         description=description,
         content_created_date=content_created_date,
         content_updated_date=content_updated_date,
-        visibility=flask.request.json.get("visibility"),
     )
 
     ret = {"did": did, "baseid": baseid, "rev": rev}

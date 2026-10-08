@@ -20,7 +20,10 @@ RESOURCE = "/programs/MMRF/projects/private-sdk-test"
 class TestArborist:
     def auth_mapping(self, jwt=""):
         if jwt == "allowed":
-            return {RESOURCE: [{"service": "indexd", "method": "read-metadata"}]}
+            return {
+                resource: [{"service": "indexd", "method": "read-metadata"}]
+                for resource in (RESOURCE, "/open")
+            }
         return {}
 
     def auth_request(self, *args, **kwargs):
@@ -44,6 +47,7 @@ def main():
                 "AUTO_MIGRATE": False,
                 "config": {
                     "TESTING": True,
+                    "PROJECT_VISIBILITY_ENABLED": True,
                     "INDEX": {"driver": driver},
                     "ALIAS": {"driver": SQLAlchemyAliasDriver(database)},
                     "DIST": [],

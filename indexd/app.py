@@ -19,7 +19,6 @@ from .guid.blueprint import blueprint as indexd_drs_blueprint
 from .blueprint import blueprint as cross_blueprint
 from indexd.urls.blueprint import blueprint as index_urls_blueprint
 from cachelib import SimpleCache
-from sqlalchemy import inspect, text
 from indexd.visibility import VisibilityUnavailable
 from indexd.errors import AuthError, AuthzError
 from indexd.index.errors import NoRecordFound
@@ -38,6 +37,18 @@ def app_init(app, settings=None):
     if not settings:
         from .default_settings import settings
     app.config.update(settings["config"])
+    configured_visibility = app.config.get(
+        "PROJECT_VISIBILITY_ENABLED",
+        os.environ.get("PROJECT_VISIBILITY_ENABLED", "false"),
+    )
+    if type(configured_visibility) not in (bool, str) or configured_visibility not in (
+        True,
+        False,
+        "true",
+        "false",
+    ):
+        raise ValueError("PROJECT_VISIBILITY_ENABLED must be a boolean or true/false")
+    app.config["PROJECT_VISIBILITY_ENABLED"] = configured_visibility in (True, "true")
 
     if settings.get("AUTO_MIGRATE", True):
         engine_name = settings["config"]["INDEX"]["driver"].engine.dialect.name
@@ -46,21 +57,6 @@ def app_init(app, settings=None):
             IndexBase.metadata.create_all()
             AliasBase.metadata.create_all()
             AuthBase.metadata.create_all()
-            engine = settings["config"]["INDEX"]["driver"].engine
-            if "visibility" not in {
-                column["name"] for column in inspect(engine).get_columns("index_record")
-            }:
-                with engine.begin() as connection:
-                    connection.execute(
-                        text(
-                            "ALTER TABLE index_record ADD COLUMN visibility VARCHAR NOT NULL DEFAULT 'public'"
-                        )
-                    )
-                    connection.execute(
-                        text(
-                            "CREATE INDEX ix_index_record_visibility ON index_record (visibility)"
-                        )
-                    )
             settings["config"]["INDEX"]["driver"].migrate_index_database()
             settings["config"]["ALIAS"]["driver"].migrate_alias_database()
         else:
